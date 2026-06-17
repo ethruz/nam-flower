@@ -68,6 +68,24 @@ node seed.js                 # seeds 12 products, 4 categories, admin user
 # 3. Setup frontend
 cd ../frontend
 npm install
+
+--------EXTRAAA UPDATEDDD DEVICEEEE INSTALLATIONN ________-------
+# Clone the repo
+git clone https://github.com/ethruz/nam-flower.git
+cd nam-flower
+
+# Backend
+cd backend
+npm install
+# Create .env file with your own values
+npx prisma migrate dev --name init
+node seed.js
+npm run dev
+
+# Frontend (new terminal)
+cd ../frontend
+npm install
+npm run dev
 ```
 
 ### Running Locally
