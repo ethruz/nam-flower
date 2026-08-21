@@ -231,6 +231,10 @@ export const createReview = async (req, res) => {
       }
     })
 
+    // Enforce verified-buyer: block users who never purchased this product
+    if (!hasBought) {
+      return res.status(403).json({ success: false, message: 'You can only review products you have purchased' })
+    }
     // Check not already reviewed
     const existing = await prisma.review.findFirst({
       where: { productId, userId: req.user.id }

@@ -1,10 +1,25 @@
 import crypto from 'crypto'
 import prisma from '../config/db.js'
 
+// ── Helper: build eSewa verification message dynamically ──────────
+// Sign the EXACT values eSewa sent back — do NOT override product_code
+// with the env value (that mismatch is a common cause of failed verification).
+const buildEsewaMessage = (decoded) => {
+  return decoded.signed_field_names
+    .split(',')
+    .map((field) => `${field}=${decoded[field]}`)
+    .join(',')
+}
+
 // ── eSewa ─────────────────────────────────────────────────────────
 
 export const initiateEsewa = async (req, res) => {
   try {
+    // ── DEBUG: confirm the URLs eSewa will redirect to ──
+    console.log('[esewa] BACKEND_URL  =', process.env.BACKEND_URL)
+    console.log('[esewa] success_url  =', `${process.env.BACKEND_URL}/api/payments/esewa/success`)
+    console.log('[esewa] failure_url  =', `${process.env.FRONTEND_URL}/payment/failed`)
+
     const { orderId } = req.body
 
     const order = await prisma.order.findUnique({
@@ -20,12 +35,18 @@ export const initiateEsewa = async (req, res) => {
     }
 
     const transactionUuid = `NF-${order.id}-${Date.now()}`
-    const amount = order.totalAmount
-    const taxAmount = 0
-    const totalAmount = amount
 
-    // eSewa HMAC signature
-    const message = `total_amount=${totalAmount},transaction_uuid=${transactionUuid},product_code=${process.env.ESEWA_MERCHANT_CODE}`
+    // Canonical amount strings — MUST be byte-for-byte identical in the
+    // signature and in the form fields, or eSewa rejects the request and
+    // bounces the user straight to failure_url. Whole numbers like 5500
+    // break unless forced to a fixed 2-decimal form ("5500.00").
+    const amountStr = Number(order.totalAmount).toFixed(2)   // 5500 -> "5500.00"
+    const taxStr = '0.00'
+    const totalStr = amountStr                               // no tax/charges here
+
+    // eSewa HMAC signature (request) — sign the EXACT strings sent in the form
+    const signedFieldNames = 'total_amount,transaction_uuid,product_code'
+    const message = `total_amount=${totalStr},transaction_uuid=${transactionUuid},product_code=${process.env.ESEWA_MERCHANT_CODE}`
     const signature = crypto
       .createHmac('sha256', process.env.ESEWA_SECRET_KEY)
       .update(message)
@@ -38,23 +59,26 @@ export const initiateEsewa = async (req, res) => {
         method: 'ESEWA',
         status: 'PENDING',
         transactionId: transactionUuid,
-        amount: totalAmount
+        amount: order.totalAmount
       }
     })
 
     const formData = {
-      amount: amount.toString(),
-      tax_amount: taxAmount.toString(),
-      total_amount: totalAmount.toString(),
+      amount: amountStr,
+      tax_amount: taxStr,
+      total_amount: totalStr,
       transaction_uuid: transactionUuid,
       product_code: process.env.ESEWA_MERCHANT_CODE,
       product_service_charge: '0',
       product_delivery_charge: '0',
       success_url: `${process.env.BACKEND_URL}/api/payments/esewa/success`,
       failure_url: `${process.env.FRONTEND_URL}/payment/failed`,
-      signed_field_names: 'total_amount,transaction_uuid,product_code',
+      signed_field_names: signedFieldNames,
       signature
     }
+
+    console.log('[initiateEsewa] signing message:', message)
+    console.log('[initiateEsewa] formData:', formData)
 
     return res.status(200).json({
       success: true,
@@ -64,51 +88,90 @@ export const initiateEsewa = async (req, res) => {
       }
     })
   } catch (error) {
+    console.error('[initiateEsewa] ERROR:', error)
     return res.status(500).json({ success: false, message: 'Failed to initiate eSewa payment' })
   }
 }
 
 export const esewaSuccess = async (req, res) => {
+  const failUrl = `${process.env.FRONTEND_URL}/payment/failed`
+  const okUrl   = `${process.env.FRONTEND_URL}/payment/success`
+
   try {
+    // ── DEBUG: if you DON'T see this line after paying, eSewa never reached
+    //    your backend → the problem is in initiateEsewa / the request, not here.
+    console.log('[esewaSuccess] HIT — query:', req.query)
+
     const { data } = req.query
 
     if (!data) {
-      return res.redirect(`${process.env.FRONTEND_URL}/payment/failed`)
+      console.error('[esewaSuccess] Missing data query param')
+      return res.redirect(failUrl)
     }
 
     // Decode base64 response from eSewa
-    const decoded = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'))
-    const { transaction_uuid, total_amount, status } = decoded
-
-    if (status !== 'COMPLETE') {
-      return res.redirect(`${process.env.FRONTEND_URL}/payment/failed`)
+    let decoded
+    try {
+      decoded = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'))
+    } catch (parseErr) {
+      console.error('[esewaSuccess] Failed to decode/parse eSewa data:', parseErr)
+      return res.redirect(failUrl)
     }
 
-    // Verify signature
-    const message = `transaction_code=${decoded.transaction_code},status=${decoded.status},total_amount=${decoded.total_amount},transaction_uuid=${decoded.transaction_uuid},product_code=${process.env.ESEWA_MERCHANT_CODE},signed_field_names=${decoded.signed_field_names}`
+    console.log('[esewaSuccess] decoded:', decoded, '| total_amount typeof:', typeof decoded.total_amount)
+
+    const { transaction_uuid, total_amount, status, signed_field_names } = decoded
+
+    if (!transaction_uuid || !total_amount || !status || !signed_field_names) {
+      console.error('[esewaSuccess] Missing required fields in decoded data:', decoded)
+      return res.redirect(failUrl)
+    }
+
+    if (status !== 'COMPLETE') {
+      console.error(`[esewaSuccess] eSewa status not COMPLETE: ${status}`)
+      return res.redirect(failUrl)
+    }
+
+    // Verify signature dynamically from signed_field_names (exact values eSewa sent)
+    const message = buildEsewaMessage(decoded)
     const expectedSig = crypto
       .createHmac('sha256', process.env.ESEWA_SECRET_KEY)
       .update(message)
       .digest('base64')
 
     if (expectedSig !== decoded.signature) {
-      return res.redirect(`${process.env.FRONTEND_URL}/payment/failed`)
+      console.error('[esewaSuccess] Signature mismatch!')
+      console.error('  Computed message:', message)
+      console.error('  Expected sig:', expectedSig)
+      console.error('  Received sig:', decoded.signature)
+      console.error('  Decoded data:', decoded)
+      return res.redirect(failUrl)
+    }
+
+    // Look up by OUR uuid — this stays stable, we never overwrite it.
+    const payment = await prisma.payment.findFirst({
+      where: { transactionId: transaction_uuid }
+    })
+
+    if (!payment) {
+      console.error(`[esewaSuccess] No payment found for transaction_uuid: ${transaction_uuid}`)
+      return res.redirect(failUrl)
+    }
+
+    // Idempotent: a repeat callback or a page refresh just lands on success.
+    if (payment.status === 'COMPLETED') {
+      console.log('[esewaSuccess] Payment already completed — redirecting success')
+      return res.redirect(okUrl)
     }
 
     // Update payment + order atomically
     await prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.findFirst({
-        where: { transactionId: transaction_uuid }
-      })
-
-      if (!payment) throw new Error('Payment not found')
-
       await tx.payment.update({
         where: { id: payment.id },
         data: {
           status: 'COMPLETED',
-          transactionId: decoded.transaction_code,
           paidAt: new Date()
+          // NOTE: transactionId is left as the uuid on purpose — do not clobber it
         }
       })
 
@@ -118,9 +181,10 @@ export const esewaSuccess = async (req, res) => {
       })
     })
 
-    return res.redirect(`${process.env.FRONTEND_URL}/payment/success`)
+    return res.redirect(okUrl)
   } catch (error) {
-    return res.redirect(`${process.env.FRONTEND_URL}/payment/failed`)
+    console.error('[esewaSuccess] ERROR:', error)
+    return res.redirect(failUrl)
   }
 }
 
@@ -164,6 +228,7 @@ export const cashOnDelivery = async (req, res) => {
       data: { orderId: order.id }
     })
   } catch (error) {
+    console.error('[cashOnDelivery] ERROR:', error)
     return res.status(500).json({ success: false, message: 'Failed to confirm order' })
   }
 }
@@ -182,6 +247,7 @@ export const adminGetPayments = async (req, res) => {
     })
     return res.status(200).json({ success: true, data: { payments } })
   } catch (error) {
+    console.error('[adminGetPayments] ERROR:', error)
     return res.status(500).json({ success: false, message: 'Server error' })
   }
 }
