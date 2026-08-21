@@ -6,8 +6,8 @@ import Footer from '../components/Footer'
 import api from '../utils/api'
 
 const HERO_IMAGE = 'https://picsum.photos/seed/flowers1/600/800'
-const BOUQUET_IMAGE = 'https://picsum.photos/seed/bouquet2/700/480'
-const WEDDING_IMAGE = 'https://picsum.photos/seed/wedding3/1200/420'
+const BOUQUET_IMAGE = 'http://localhost:5173/images/white.jpg'
+const WEDDING_IMAGE = 'http://localhost:5173/images/wedding-boquet.jpg'
 
 
 // Animated counter hook

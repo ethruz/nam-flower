@@ -9,15 +9,40 @@ export default function Navbar() {
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
 
-  // Close dropdown when clicking outside
+  // Close profile dropdown when clicking/tapping outside
   useEffect(() => {
     const handler = (e) => {
       if (profileRef.current && !profileRef.current.contains(e.target)) {
         setProfileOpen(false)
       }
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    // pointerdown covers mouse + touch more consistently than mousedown alone
+    document.addEventListener('pointerdown', handler)
+    return () => document.removeEventListener('pointerdown', handler)
+  }, [])
+
+  // Close both dropdowns on Escape for keyboard users
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setMenuOpen(false)
+        setProfileOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // If the viewport grows past the mobile breakpoint while the mobile
+  // menu is open, close it — otherwise the hamburger disappears but the
+  // dropdown panel keeps rendering underneath the desktop nav with no
+  // way to dismiss it.
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 768) setMenuOpen(false)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   const handleLogout = () => {
@@ -37,7 +62,7 @@ export default function Navbar() {
         <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '60px' }}>
 
           {/* Logo */}
-          <Link to="/" onClick={() => setMenuOpen(false)} style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '20px', fontWeight: '600', color: '#3D2B1F', textDecoration: 'none', flexShrink: 0 }}>
+          <Link to="/" onClick={() => { setMenuOpen(false); setProfileOpen(false) }} style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: '20px', fontWeight: '600', color: '#3D2B1F', textDecoration: 'none', flexShrink: 0 }}>
             Nam Flower
           </Link>
 
@@ -53,7 +78,11 @@ export default function Navbar() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
 
             {/* Cart */}
-            <Link to="/cart" style={{ color: '#3D2B1F', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <Link
+              to="/cart"
+              onClick={() => { setMenuOpen(false); setProfileOpen(false) }}
+              style={{ color: '#3D2B1F', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '5px' }}
+            >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>
                 <line x1="3" y1="6" x2="21" y2="6"/>
@@ -67,7 +96,9 @@ export default function Navbar() {
               <div ref={profileRef} style={{ position: 'relative' }} className="desktop-nav">
                 {/* Avatar button */}
                 <button
-                  onClick={() => setProfileOpen(o => !o)}
+                  onClick={() => { setProfileOpen(o => !o); setMenuOpen(false) }}
+                  aria-label="User menu"
+                  aria-expanded={profileOpen}
                   style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#E8C547', border: '2px solid #D4B030', color: '#2C1A0E', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit', transition: 'transform 0.15s' }}
                   onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'}
                   onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
@@ -132,9 +163,17 @@ export default function Navbar() {
                 )}
               </div>
             ) : (
-              <div className="desktop-nav" style={{ gap: '10px' }}>
-                <Link to="/login" style={navLink}>Login</Link>
-                <Link to="/register" style={{ background: '#E8C547', color: '#3D2B1F', padding: '7px 18px', borderRadius: '20px', textDecoration: 'none', fontSize: '13px', fontWeight: '500' }}>
+              <div className="desktop-nav" style={{ gap: '10px', alignItems: 'center' }}>
+                <Link
+                  to="/login"
+                  style={{ ...navLink, display: 'flex', alignItems: 'center', padding: '7px 0', lineHeight: 1 }}
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/register"
+                  style={{ background: '#E8C547', color: '#3D2B1F', padding: '7px 18px', borderRadius: '20px', textDecoration: 'none', fontSize: '13px', fontWeight: '500', display: 'flex', alignItems: 'center', lineHeight: 1 }}
+                >
                   Sign up
                 </Link>
               </div>
@@ -143,7 +182,9 @@ export default function Navbar() {
             {/* Hamburger — mobile only */}
             <button
               className="mobile-menu-btn"
-              onClick={() => setMenuOpen(!menuOpen)}
+              onClick={() => { setMenuOpen(!menuOpen); setProfileOpen(false) }}
+              aria-label="Toggle menu"
+              aria-expanded={menuOpen}
               style={{ display: 'none', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: '#3D2B1F' }}
             >
               {menuOpen
