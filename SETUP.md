@@ -56,9 +56,9 @@ import('./src/config/db.js').then(async ({ default: prisma }) => {
   const bcrypt = await import('bcryptjs')
   const hash = await bcrypt.default.hash('admin123', 12)
   await prisma.user.create({
-    data: { name: 'Admin', email: 'admin@namflower.com', password: hash, role: 'ADMIN' }
+    data: { name: 'Admin', email: '@namflower.com', password: hash, role: 'ADMIN' }
   })
-  console.log('Admin created: admin@namflower.com / admin123')
+  console.log('Admin created: @namflower.com / adminxxxxx')
   process.exit(0)
 })
 "
